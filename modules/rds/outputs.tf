@@ -1,0 +1,1 @@
+output "rds_endpoints" { value = module.rds[*].db_instance_endpoint }

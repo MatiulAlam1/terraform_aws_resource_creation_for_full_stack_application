@@ -1,144 +1,55 @@
-variable "cluster_name" {
+variable "eks_cluster_name" {
   description = "Name of the EKS cluster"
   type        = string
 }
 
-variable "env" {
-  description = "Environment name (e.g., dev, test, prod)"
-  type        = string
-}
-
-variable "cluster_version" {
-  description = "Kubernetes minor version to use for the EKS cluster (for example 1.21)"
+variable "eks_version" {
+  description = "Kubernetes version for the EKS cluster"
   type        = string
   default     = "1.28"
 }
 
 variable "vpc_id" {
-  description = "ID of the VPC where to create security group"
+  description = "ID of the VPC where the EKS cluster will be created"
   type        = string
 }
 
-variable "subnet_ids" {
-  description = "A list of subnet IDs where the EKS cluster (ENIs) will be provisioned along with the nodes/node groups"
+variable "private_subnet_ids" {
+  description = "List of private subnet IDs for EKS control plane and worker ENIs"
   type        = list(string)
 }
 
-variable "node_instance_types" {
-  description = "Set of instance types associated with the EKS Node Group"
+variable "public_subnet_ids" {
+  description = "List of public subnet IDs for load balancers"
   type        = list(string)
-  default     = ["t3.small"]  # Changed from t3.medium to t3.small for cost optimization
 }
 
-variable "node_group_min_size" {
-  description = "Minimum number of instances/nodes"
+variable "node_min_size" {
+  description = "Minimum number of instances for the managed node group"
   type        = number
   default     = 1
 }
 
-variable "node_group_max_size" {
-  description = "Maximum number of instances/nodes"
+variable "node_max_size" {
+  description = "Maximum number of instances for the managed node group"
   type        = number
-  default     = 10
+  default     = 3
 }
 
-variable "node_group_desired_size" {
-  description = "Desired number of instances/nodes"
+variable "node_desired_size" {
+  description = "Desired number of instances for the managed node group"
   type        = number
   default     = 2
 }
 
-variable "key_name" {
-  description = "EC2 Key Pair name that provides access for remote communication with the worker nodes in the EKS Node Group"
-  type        = string
-  default     = null
-}
-
-variable "additional_security_group_ids" {
-  description = "A list of additional security group ids to attach to worker instances"
+variable "node_instance_types" {
+  description = "Instance types to use for the managed node group"
   type        = list(string)
-  default     = []
+  default     = ["t3.small"]
 }
 
-variable "enable_fargate" {
-  description = "Enable Fargate profiles"
-  type        = bool
-  default     = false
-}
-
-variable "node_group_taints" {
-  description = "The Kubernetes taints to be applied to the nodes in the node group"
-  type        = any
+variable "tags" {
+  description = "Tags to apply to the EKS resources"
+  type        = map(string)
   default     = {}
-}
-
-variable "map_users" {
-  description = "Additional IAM users to add to the aws-auth configmap"
-  type = list(object({
-    userarn  = string
-    username = string
-    groups   = list(string)
-  }))
-  default = []
-}
-
-variable "map_accounts" {
-  description = "Additional AWS account numbers to add to the aws-auth configmap"
-  type        = list(string)
-  default     = []
-}
-
-variable "cluster_endpoint_public_access" {
-  description = "Indicates whether or not the Amazon EKS public API server endpoint is enabled"
-  type        = bool
-  default     = true
-}
-
-variable "cluster_endpoint_private_access" {
-  description = "Indicates whether or not the Amazon EKS private API server endpoint is enabled"
-  type        = bool
-  default     = true  # Enable private access for security
-}
-
-variable "cluster_endpoint_public_access_cidrs" {
-  description = "List of CIDR blocks which can access the Amazon EKS public API server endpoint"
-  type        = list(string)
-  default     = ["0.0.0.0/0"]  # Restrict this in production
-}
-
-variable "my_ip" {
-  description = "Your IP address for secure EKS API access"
-  type        = string
-  default     = "0.0.0.0/0"
-}
-
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC"
-  type        = string
-  default     = "10.1.0.0/16"
-}
-
-variable "enable_cluster_creator_admin_permissions" {
-  description = "Indicates whether or not to add the cluster service account as a cluster admin"
-  type        = bool
-  default     = true
-}
-
-variable "cluster_addons" {
-  description = "Map of cluster addon configurations to enable"
-  type        = any
-  default = {
-    coredns = {
-      most_recent = true
-    }
-    kube-proxy = {
-      most_recent = true
-    }
-    vpc-cni = {
-      most_recent = true
-    }
-    aws-ebs-csi-driver = {
-      most_recent = true
-    }
-  }
 }

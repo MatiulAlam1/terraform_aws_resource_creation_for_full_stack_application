@@ -1,0 +1,29 @@
+terragrunt run-all destroy
+
+
+
+aws eks update-kubeconfig --region ap-south-1 --name my-eks-dev
+
+
+aws eks describe-cluster --name my-eks-dev --region ap-south-1 --query 'cluster.resourcesVpcConfig.endpointPublicAccess'
+
+
+## Commands to verify ArgoCD and IstioOnce your kubeconfig is set up:ArgoCDkubectl get pods -n argocd
+kubectl get svc -n argocd
+
+
+
+kubectl get pods -n argocd
+kubectl get svc -n argocd
+
+
+
+kubectl get pods -n istio-system
+kubectl get svc -n istio-system
+
+
+
+cd environments/test
+terragrunt run-all init
+terragrunt run-all plan
+terragrunt run-all apply

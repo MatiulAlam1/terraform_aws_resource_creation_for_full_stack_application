@@ -1,9 +1,7 @@
-variable "cidr_block" {
-  description = "The CIDR block for the VPC"
-  type        = string
-}
-
-variable "env" {
-  description = "Environment name (e.g., dev, test, prod)"
-  type        = string
-}
+variable "vpc_name" { type = string }
+variable "vpc_cidr" { type = string }
+variable "azs" { type = list(string) }
+variable "private_subnets" { type = list(string) }
+variable "public_subnets" { type = list(string) }
+variable "single_nat_gateway" { type = bool }
+variable "tags" { type = map(string) }
