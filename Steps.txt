@@ -26,4 +26,271 @@ kubectl get svc -n istio-system
 cd environments/test
 terragrunt run-all init
 terragrunt run-all plan
+
+terragrunt run-all apply --terragrunt-non-interactive
+
+
 terragrunt run-all apply
+
+===========================
+
+✅ 1. How to Create Topic & Subscriber in AWS MSK
+
+MSK is managed Apache Kafka. Kafka itself doesn’t provide APIs to “create subscribers” — consumers subscribe automatically when they start consuming.
+But topics must be created manually (depending on your MSK config).
+
+1.1 Create Kafka Topic in MSK
+Option A — Using MSK Serverless (with IAM auth)
+
+If your MSK is Serverless or using IAM SASL authentication:
+
+Install Kafka tools on an EC2 or CloudShell that has access to MSK:
+
+sudo yum install -y java-17-amazon-corretto
+curl -O https://archive.apache.org/dist/kafka/3.6.0/kafka_2.13-3.6.0.tgz
+tar -xzf kafka_2.13-3.6.0.tgz
+cd kafka_2.13-3.6.0/bin
+
+
+Get bootstrap servers:
+Go to MSK console → Clusters → bootstrap servers.
+
+Create the topic:
+
+./kafka-topics.sh \
+    --create \
+    --topic orders \
+    --partitions 3 \
+    --replication-factor 2 \
+    --bootstrap-server <BOOTSTRAP_SERVERS>
+
+Option B — Using MSK Provisioned (Plaintext or TLS)
+
+Use same command; if TLS:
+
+./kafka-topics.sh --create \
+  --topic orders \
+  --partitions 3 \
+  --replication-factor 3 \
+  --bootstrap-server <BROKER> \
+  --command-config client.properties
+
+
+Where client.properties contains:
+
+security.protocol=SSL
+ssl.truststore.location=/path/kafka.client.truststore.jks
+ssl.truststore.password=changeit
+
+1.2 Create Subscriber (Kafka Consumer)
+
+Consumers subscribe automatically when running your app.
+
+Example Consumer in Java
+Properties props = new Properties();
+props.put("bootstrap.servers", "<MSK_BROKERS>");
+props.put("group.id", "order-service");
+props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+
+KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+consumer.subscribe(Arrays.asList("orders"));
+
+while (true) {
+    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+    for (ConsumerRecord<String, String> record : records) {
+        System.out.println("Received: " + record.value());
+    }
+}
+
+
+✔️ Topic = “orders”
+✔️ consumer subscribes automatically.
+No need to “create subscriber”.
+
+=====================
+
+✅ 2. Integrate AWS Managed Prometheus + Grafana with EKS
+
+This is called AMP + AMG + EKS integration.
+
+🔥 Full Architecture
+
+Your EKS → Prometheus → Remote Write → AMP → Grafana dashboard (AMG)
+
+Step-by-step Setup
+Step 1 — Install Prometheus & Grafana Agent on EKS (via Helm)
+
+Use the Prometheus Operator (kube-prometheus-stack):
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace
+
+
+This gives you:
+
+✔️ Prometheus
+✔️ Alertmanager
+✔️ Node Exporter
+✔️ Grafana (but you will later use AMG)
+
+
+================================
+
+Step 2 — Create AWS Managed Prometheus Workspace
+
+Go to:
+
+Amazon Managed Service for Prometheus → "Create Workspace"
+
+You’ll get:
+
+✔️ Workspace ID
+✔️ Endpoint URL
+Example:
+
+https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-ABC123
+
+
+=======================
+
+Step 3 — Configure Prometheus Remote Write to AMP
+
+Edit the Prometheus config:
+
+kubectl -n monitoring edit prometheus monitoring-kube-prometheus-prometheus
+
+
+Add:
+
+spec:
+  remoteWrite:
+    - url: https://aps-workspaces.<region>.amazonaws.com/workspaces/<WS_ID>/api/v1/remote_write
+      sigv4:
+        region: <region>
+
+
+Apply and Prometheus will send metrics into AWS AMP.
+
+
+======================
+
+Step 4 — Create IRSA Role for Prometheus
+
+Prometheus needs IAM permissions:
+
+eksctl create iamserviceaccount \
+  --name amp-iamproxy-ingest \
+  --namespace monitoring \
+  --cluster my-eks \
+  --attach-policy-arn arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess \
+  --approve
+
+
+Update Prometheus service account to use this.
+
+================
+
+Step 5 — Connect AWS Managed Grafana to AMP
+
+Go to:
+
+Amazon Managed Grafana → Workspace → Create Workspace
+
+Enable AMP data source.
+
+Add your Prometheus workspace:
+
+aps-workspaces.<region>.amazonaws.com
+workspace: ws-ABC123
+
+
+Click “Test Connection”.
+
+
+==============================
+
+Step 6 — Add EKS Dashboards
+
+Inside Grafana:
+
+Go to Dashboards → Import
+
+Use standard panel IDs:
+
+Node Exporter Full → 1860
+
+Kubernetes API Server → 15758
+
+Kubelet → 12183
+
+Pod metrics → 6417
+
+
+========================================
+
+⭐ Final Summary
+MSK
+
+✔ Create topics using Kafka CLI
+✔ Consumers subscribe automatically → no manual subscriber creation
+
+AMP + EKS
+
+Install Prometheus via Helm
+
+Create AMP Workspace
+
+Configure Prometheus remote_write
+
+Add IAM Role for Prometheus
+
+Connect AWS Managed Grafana
+
+Import dashboards
+
+
+===========
+# Kafka CLI intsall to create topic
+
+# Download Kafka 3.7.0 from the archive site
+wget https://archive.apache.org/dist/kafka/3.7.0/kafka_2.13-3.7.0.tgz
+
+# Extract the tarball
+tar -xvzf kafka_2.13-3.7.0.tgz
+
+# Move into Kafka directory
+cd kafka_2.13-3.7.0
+
+
+===========
+# 1. Connect to EKS cluster from local PC
+aws eks update-kubeconfig --name my-eks-test --region ap-south-1
+
+# 2. Verify connection to EKS
+kubectl get nodes
+
+# 3. Get MSK bootstrap servers
+aws kafka get-bootstrap-brokers --cluster-arn arn:aws:kafka:ap-south-1:674378112610:cluster/my-msk-test/16855ca7-d9bc-4035-acbf-292d1a7153a8-3 --region ap-south-1
+
+# 4. Create Kafka client pod in EKS (runs from local PC, pod runs in EKS)
+kubectl run kafka-client --rm -it --image=confluentinc/cp-kafka:latest --restart=Never -- bash
+
+# 5. Inside the kafka-client pod - Create SSL client config
+cat > /tmp/client.properties << EOF
+security.protocol=SSL
+EOF
+
+# 6. Inside the kafka-client pod - Create Kafka topic
+kafka-topics --create \
+  --topic my-topic \
+  --bootstrap-server b-3.mymsktest.iexcqt.c3.kafka.ap-south-1.amazonaws.com:9094,b-1.mymsktest.iexcqt.c3.kafka.ap-south-1.amazonaws.com:9094,b-2.mymsktest.iexcqt.c3.kafka.ap-south-1.amazonaws.com:9094 \
+  --command-config /tmp/client.properties \
+  --partitions 3 \
+  --replication-factor 3
+
+# 7. Exit pod (pod auto-deletes due to --rm flag)
+exit

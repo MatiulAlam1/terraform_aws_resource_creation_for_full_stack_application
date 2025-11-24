@@ -4,32 +4,11 @@ module "s3_bucket" {
 
   bucket = var.s3_bucket_name
 
-  # Enable website hosting (index and error documents)
-  website = {
-    index_document = "index.html"
-    error_document = "error.html"
-  }
-
-  # Allow public access
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
-
-  # Bucket policy for public read access
-  attach_policy = true
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "PublicReadGetObject"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "arn:aws:s3:::${var.s3_bucket_name}/*"
-      }
-    ]
-  })
+  # Block all public access
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 
   versioning = {
     enabled = true

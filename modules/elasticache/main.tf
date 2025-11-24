@@ -29,7 +29,7 @@ resource "aws_security_group" "redis_sg" {
     from_port   = 6379
     to_port     = 6379
     protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.selected.cidr_block]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   egress {
@@ -40,8 +40,4 @@ resource "aws_security_group" "redis_sg" {
   }
 
   tags = var.tags
-}
-
-data "aws_vpc" "selected" {
-  id = var.vpc_id
 }
