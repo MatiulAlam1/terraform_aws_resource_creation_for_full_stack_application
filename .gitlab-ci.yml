@@ -11,7 +11,9 @@ variables:
   ENABLE_DRIFT_DETECTION: "true"
   SAST_EXCLUDED_PATHS: "spec, test, tests, tmp"
   # Multi-region support - define these in GitLab CI/CD variables:
-  # AWS_REGIONS: "us-east-1,eu-west-1,ap-south-1" (comma-separated)
+  # AWS_REGIONS_DEV: "eu-west-2" (comma-separated)
+  # AWS_REGIONS_TEST: "eu-west-2,ap-northeast-1" (comma-separated)
+  # AWS_REGIONS_PROD: "eu-west-2,ap-northeast-1,af-south-1" (comma-separated)
   # AWS_DEFAULT_REGION will be set dynamically per region
 
 stages:

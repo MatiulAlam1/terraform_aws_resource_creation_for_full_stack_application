@@ -18,17 +18,15 @@ This infrastructure supports multi-region deployment with region-specific state 
 Add the following variables in GitLab: **Settings → CI/CD → Variables**
 
 ```
-AWS_REGIONS = "ap-south-1,us-east-1,eu-west-1"
+AWS_REGIONS_DEV = "eu-west-2"
+AWS_REGIONS_TEST = "eu-west-2,ap-northeast-1"
+AWS_REGIONS_PROD = "eu-west-2,ap-northeast-1,af-south-1"
 ```
 
-Or override the `.regions` matrix in `.gitlab-ci.yml`:
-
-```yaml
-.regions:
-  dev: ["ap-south-1"]
-  test: ["ap-south-1", "us-east-1"]
-  prod: ["ap-south-1", "us-east-1", "eu-west-1"]
-```
+The pipeline automatically uses these variables based on the branch:
+- `dev` branch → uses `AWS_REGIONS_DEV`
+- `test` branch → uses `AWS_REGIONS_TEST`  
+- `main` branch → uses `AWS_REGIONS_PROD`
 
 ### 2. Initialize Backend Infrastructure
 
@@ -36,7 +34,7 @@ Run the setup script to create S3 buckets and DynamoDB tables in all regions:
 
 ```bash
 # Set regions (comma-separated)
-export AWS_REGIONS="ap-south-1,us-east-1,eu-west-1"
+export AWS_REGIONS="eu-west-2,ap-northeast-1,af-south-1"
 
 # Run setup script
 bash scripts/setup-multi-region-backend.sh
@@ -50,7 +48,7 @@ This creates:
 
 ```bash
 # Set target region
-export AWS_REGION="us-east-1"
+export AWS_REGION="ap-northeast-1"
 
 # Deploy
 cd environments/dev
@@ -74,7 +72,7 @@ git push origin main  # Deploys to all prod regions
 **Root terragrunt.hcl**:
 ```hcl
 locals {
-  region = get_env("AWS_REGION", "ap-south-1")
+  region = get_env("AWS_REGION", "eu-west-2")
 }
 
 remote_state {
@@ -122,12 +120,12 @@ terragrunt-apply-prod:
 ### State File Structure
 
 ```
-s3://my-terraform-states-ap-south-1/
+s3://my-terraform-states-eu-west-2/
   └── environments/dev/vpc/terraform.tfstate
   └── environments/dev/eks/terraform.tfstate
   └── ...
 
-s3://my-terraform-states-us-east-1/
+s3://my-terraform-states-ap-northeast-1/
   └── environments/dev/vpc/terraform.tfstate
   └── environments/dev/eks/terraform.tfstate
   └── ...
@@ -141,12 +139,12 @@ Edit `environments/{env}/vpc/terragrunt.hcl`:
 
 ```hcl
 locals {
-  region = get_env("AWS_REGION", "ap-south-1")
+  region = get_env("AWS_REGION", "eu-west-2")
   
   vpc_cidrs = {
-    "ap-south-1" = "10.0.0.0/16"
-    "us-east-1"  = "10.1.0.0/16"
-    "eu-west-1"  = "10.2.0.0/16"
+    "eu-west-2"     = "10.0.0.0/16"
+    "ap-northeast-1" = "10.1.0.0/16"
+    "af-south-1"    = "10.2.0.0/16"
   }
 }
 
@@ -160,12 +158,12 @@ inputs = {
 
 ```hcl
 locals {
-  region = get_env("AWS_REGION", "ap-south-1")
+  region = get_env("AWS_REGION", "eu-west-2")
   
   instance_types = {
-    "ap-south-1" = "t3.small"
-    "us-east-1"  = "t3.medium"
-    "eu-west-1"  = "t3.large"
+    "eu-west-2"     = "t3.small"
+    "ap-northeast-1" = "t3.medium"
+    "af-south-1"    = "t3.large"
   }
 }
 
@@ -181,7 +179,7 @@ inputs = {
 Deploy one region at a time:
 
 ```bash
-for region in ap-south-1 us-east-1 eu-west-1; do
+for region in eu-west-2 ap-northeast-1 af-south-1; do
   export AWS_REGION=$region
   cd environments/prod
   terragrunt run-all apply --terragrunt-non-interactive
@@ -194,7 +192,7 @@ Automatic parallel deployment via GitLab CI matrix jobs.
 
 ### Strategy 3: Blue-Green Multi-Region
 
-1. Deploy to new region (e.g., `eu-west-1`)
+1. Deploy to new region (e.g., `af-south-1`)
 2. Test and validate
 3. Update DNS/Route53 to include new region
 4. Decommission old region if needed
@@ -204,7 +202,7 @@ Automatic parallel deployment via GitLab CI matrix jobs.
 ### Check All Regions
 
 ```bash
-for region in ap-south-1 us-east-1 eu-west-1; do
+for region in eu-west-2 ap-northeast-1 af-south-1; do
   echo "=== Region: $region ==="
   aws eks list-clusters --region $region
   aws rds describe-db-instances --region $region --query 'DBInstances[*].[DBInstanceIdentifier,DBInstanceStatus]'
@@ -221,7 +219,7 @@ Each region gets its own observability job that checks:
 
 ## Cost Optimization
 
-- **Dev**: Single region (`ap-south-1`)
+- **Dev**: Single region (`eu-west-2`)
 - **Test**: Two regions for testing failover
 - **Prod**: Three regions for high availability
 
@@ -251,7 +249,7 @@ terragrunt output
 
 ```bash
 # Check lock table
-aws dynamodb describe-table --table-name terraform-locks-$AWS_REGION --region $AWS_REGION
+aws dynamodb describe-table --table-name terraform-locks --region $AWS_REGION
 
 # Force unlock if stuck
 terragrunt force-unlock <LOCK_ID>

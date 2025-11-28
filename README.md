@@ -165,7 +165,7 @@ https://<cloudfront-domain-name>.cloudfront.net
 
 **Connect to EKS:**
 ```bash
-aws eks update-kubeconfig --name my-eks-dev --region ap-south-1
+aws eks update-kubeconfig --name my-eks-dev --region eu-west-2
 kubectl get nodes
 ```
 
@@ -373,13 +373,13 @@ Set these variables in GitLab CI/CD settings (Group or Project level):
 
 ```bash
 # Development regions (comma-separated)
-AWS_REGIONS_DEV="ap-south-1"
+AWS_REGIONS_DEV="eu-west-2"
 
 # Test regions (comma-separated)
-AWS_REGIONS_TEST="ap-south-1,us-east-1"
+AWS_REGIONS_TEST="eu-west-2,ap-northeast-1"
 
 # Production regions (comma-separated)
-AWS_REGIONS_PROD="ap-south-1,us-east-1,eu-west-1"
+AWS_REGIONS_PROD="eu-west-2,ap-northeast-1,af-south-1"
 
 # AWS credentials
 AWS_ACCESS_KEY_ID="<your-access-key>"
@@ -395,8 +395,8 @@ AWS_SECRET_ACCESS_KEY="<your-secret-key>"
 ### Resource Naming for Multi-Region
 
 Resources with region suffixes:
-- S3 buckets: `my-react-bucket-dev-2232131-ap-south-1`
-- ElastiCache: `my-redis-dev-ap-south-1`
+- S3 buckets: `my-react-bucket-dev-2232131-eu-west-2`
+- ElastiCache: `my-redis-dev-eu-west-2`
 - CloudFront OAC: Derived from S3 bucket name
 
 Region-scoped resources (no suffix needed):
@@ -493,7 +493,7 @@ cd aws-resource-creation-iaac
 # Add: AWS_REGIONS_DEV, AWS_REGIONS_TEST, AWS_REGIONS_PROD
 
 # 3. Setup multi-region backends (run once)
-bash scripts/setup-multi-region-backend.sh "ap-south-1,us-east-1,eu-west-1"
+bash scripts/setup-multi-region-backend.sh "eu-west-2,ap-northeast-1,af-south-1"
 
 # 4. Push to trigger deployment
 git checkout -b dev
@@ -510,7 +510,7 @@ git clone <repo-url>
 cd aws-resource-creation-iaac
 
 # Create S3 bucket for state (per region)
-aws s3 mb s3://my-terraform-states-ap-south-1 --region ap-south-1
+aws s3 mb s3://my-terraform-states-eu-west-2 --region eu-west-2
 
 # Create DynamoDB table for locking (per region)
 aws dynamodb create-table \
@@ -518,7 +518,7 @@ aws dynamodb create-table \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
   --key-schema AttributeName=LockID,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST \
-  --region ap-south-1
+  --region eu-west-2
 
 # Deploy infrastructure
 cd environments/dev
@@ -541,7 +541,7 @@ cd environments/dev
 terragrunt run-all destroy
 
 # For multi-region cleanup
-for region in ap-south-1 us-east-1 eu-west-1; do
+for region in eu-west-2 ap-northeast-1 af-south-1; do
   export AWS_REGION=$region
   cd environments/dev
   terragrunt run-all destroy --terragrunt-non-interactive
