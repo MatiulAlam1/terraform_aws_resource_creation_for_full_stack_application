@@ -1,3 +1,4 @@
+#Variables for CloudFront distribution module.......
 variable "s3_bucket_name" {
   type = string
 }

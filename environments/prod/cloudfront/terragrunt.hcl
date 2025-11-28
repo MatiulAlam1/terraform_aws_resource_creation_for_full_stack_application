@@ -4,6 +4,7 @@ dependency "s3" {
   config_path = "../s3"
   mock_outputs = {
     s3_bucket_id = "mock-bucket"
+    s3_bucket_domain_name = "mock-bucket.s3.amazonaws.com"
   }
 }
 

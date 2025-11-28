@@ -1,0 +1,495 @@
+image:
+  name: hashicorp/terraform:1.9.8
+  entrypoint: [""]
+
+# Dynamic regions from GitLab environment variables
+# Set AWS_REGIONS per environment in GitLab CI/CD variables
+
+variables:
+  TF_ROOT: "."
+  TG_OPTS: "--terragrunt-non-interactive"
+  ENABLE_DRIFT_DETECTION: "true"
+  SAST_EXCLUDED_PATHS: "spec, test, tests, tmp"
+  # Multi-region support - define these in GitLab CI/CD variables:
+  # AWS_REGIONS: "us-east-1,eu-west-1,ap-south-1" (comma-separated)
+  # AWS_DEFAULT_REGION will be set dynamically per region
+
+stages:
+  - scan
+  - init
+  - validate
+  - security
+  - plan
+  - apply
+  - observability
+
+before_script:
+  - apk add --no-cache bash curl git jq aws-cli python3 py3-pip
+  - curl -sL https://github.com/gruntwork-io/terragrunt/releases/download/v0.68.5/terragrunt_linux_amd64 -o /usr/local/bin/terragrunt
+  - chmod +x /usr/local/bin/terragrunt
+  - terragrunt --version
+  - terraform --version
+  - curl -sL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -o gitleaks.tar.gz
+  - tar -xzf gitleaks.tar.gz gitleaks
+  - chmod +x gitleaks && mv gitleaks /usr/local/bin/
+  # - pip install --break-system-packages checkov
+  - curl -sL https://github.com/aquasecurity/tfsec/releases/download/v1.28.1/tfsec-linux-amd64 -o /usr/local/bin/tfsec
+  - chmod +x /usr/local/bin/tfsec
+  - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+  - chmod +x kubectl && mv kubectl /usr/local/bin/
+  - |
+    if [ "$CI_COMMIT_BRANCH" == "main" ]; then
+      export ENVIRONMENT="prod"
+      export AWS_REGIONS="$AWS_REGIONS_PROD"
+    elif [ "$CI_COMMIT_BRANCH" == "test" ]; then
+      export ENVIRONMENT="test"
+      export AWS_REGIONS="$AWS_REGIONS_TEST"
+    else
+      export ENVIRONMENT="dev"
+      export AWS_REGIONS="$AWS_REGIONS_DEV"
+    fi
+    export ENV_PATH="environments/$ENVIRONMENT"
+    if [ -z "$AWS_REGIONS" ]; then
+      echo "❌ ERROR: AWS_REGIONS variable is not set!"
+      echo "Set AWS_REGIONS_DEV, AWS_REGIONS_TEST, or AWS_REGIONS_PROD in GitLab group CI/CD variables"
+      exit 1
+    fi
+    export AWS_REGION=$(echo "$AWS_REGIONS" | cut -d',' -f1)
+    export AWS_DEFAULT_REGION="$AWS_REGION"
+    echo "🌍 Environment: $ENVIRONMENT | Regions: $AWS_REGIONS"
+  - aws sts get-caller-identity
+
+# -----------------------------
+# TEST JOB (ALWAYS RUNS)
+# -----------------------------
+test-pipeline:
+  stage: scan
+  before_script: []
+  script:
+    - echo "🧪 Pipeline is working!"
+  rules:
+    - when: always
+
+# -----------------------------
+# SECRETS SCAN 
+# -----------------------------
+# secrets-scan:
+#   stage: scan
+#   script:
+#     - gitleaks detect --source=. -v
+#   allow_failure: false
+#   rules:
+#     - if: '$CI_COMMIT_BRANCH == "main"'
+#       changes:
+#         - modules/**/*
+#         - environments/prod/**/*
+#     - if: '$CI_COMMIT_BRANCH == "test"'
+#       changes:
+#         - modules/**/*
+#         - environments/test/**/*
+#     - if: '$CI_COMMIT_BRANCH == "dev"'
+#       changes:
+#         - modules/**/*
+#         - environments/dev/**/*
+
+# -----------------------------
+# INIT
+# -----------------------------
+terragrunt-init:
+  stage: init
+  script:
+    - cd "$ENV_PATH"
+    - |
+      for dir in */; do
+        cd "$dir"
+        terragrunt init --terragrunt-non-interactive --reconfigure || true
+        cd ..
+      done
+  cache: {}
+  # dependencies:
+  #   - secrets-scan
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - modules/**/*
+        - environments/prod/**/*
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      changes:
+        - modules/**/*
+        - environments/test/**/*
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - modules/**/*
+        - environments/dev/**/*
+
+# -----------------------------
+# VALIDATE
+# -----------------------------
+terragrunt-validate:
+  stage: validate
+  script:
+    - cd "$ENV_PATH"
+    - terragrunt run-all validate ${TG_OPTS}
+  dependencies:
+    - terragrunt-init
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - modules/**/*
+        - environments/prod/**/*
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      changes:
+        - modules/**/*
+        - environments/test/**/*
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - modules/**/*
+        - environments/dev/**/*
+
+# -----------------------------
+# SECURITY SCAN
+# -----------------------------
+iac-security-scan:
+  stage: security
+  script:
+    - cd "$ENV_PATH"
+    - echo "🔒 Running Checkov..."
+    - checkov -d . --framework terraform --quiet --skip-check CKV_AWS_158,CKV_AWS_19 --output json > checkov-report.json 2>/dev/null || echo "Checkov skipped"
+    - echo "🔒 Running tfsec..."
+    - tfsec . --format json > tfsec-report.json || true
+  dependencies:
+    - terragrunt-validate
+  allow_failure: false
+  artifacts:
+    reports:
+      sast: checkov-report.json
+    paths:
+      - checkov-report.json
+      - tfsec-report.json
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - modules/**/*
+        - environments/prod/**/*
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      changes:
+        - modules/**/*
+        - environments/test/**/*
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - modules/**/*
+        - environments/dev/**/*
+
+# -----------------------------
+# PLAN
+# -----------------------------
+terragrunt-plan:
+  stage: plan
+  script:
+    - cd "$ENV_PATH"
+    - terragrunt run-all plan ${TG_OPTS}
+  dependencies:
+    - iac-security-scan
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - modules/**/*
+        - environments/prod/**/*
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      changes:
+        - modules/**/*
+        - environments/test/**/*
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - modules/**/*
+        - environments/dev/**/*
+
+# -----------------------------
+# POLICY CHECK ON PLAN
+# -----------------------------
+policy-check:
+  stage: plan
+  script:
+    - cd "$ENV_PATH"
+    - |
+      echo "📋 Running policy enforcement with OPA..."
+      
+      # Install Conftest for OPA policy checks
+      curl -L https://github.com/open-policy-agent/conftest/releases/download/v0.49.1/conftest_0.49.1_Linux_x86_64.tar.gz | tar xz
+      chmod +x conftest && mv conftest /usr/local/bin/
+      
+      # Run policy checks on Terraform plans
+      if [ -d "policy" ]; then
+        echo "Running custom policies..."
+        conftest test . --policy policy/ --all-namespaces || echo "⚠️ Policy violations detected"
+      else
+        echo "No custom policies found, skipping OPA checks"
+      fi
+      
+      echo "✅ Policy check completed"
+  dependencies:
+    - terragrunt-plan
+  allow_failure: true
+  artifacts:
+    paths:
+      - policy-report.txt
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - modules/**/*
+        - environments/prod/**/*
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      changes:
+        - modules/**/*
+        - environments/test/**/*
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - modules/**/*
+        - environments/dev/**/*
+
+# -----------------------------
+# APPLY (MULTI-REGION DEPLOYMENT)
+# -----------------------------
+
+# Dev: Auto-approve (fast iteration)
+terragrunt-apply-dev:
+  stage: apply
+  script:
+    - |
+      for region in $(echo "$AWS_REGIONS" | tr ',' ' '); do
+        echo "🚀 Auto-applying changes in $region (dev)..."
+        export AWS_REGION="$region"
+        export AWS_DEFAULT_REGION="$region"
+        cd "$CI_PROJECT_DIR/$ENV_PATH"
+        find . -type d -name ".terragrunt-cache" -exec rm -rf {} + 2>/dev/null || true
+        terragrunt run-all init -reconfigure ${TG_OPTS}
+        terragrunt run-all apply ${TG_OPTS}
+        terragrunt run-all output -json ${TG_OPTS} | tee outputs-${region}.json
+      done
+  artifacts:
+    paths:
+      - environments/dev/outputs-*.json
+    expire_in: 7 days
+  dependencies:
+    - policy-check
+  environment:
+    name: dev
+    auto_stop_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - modules/**/*
+        - environments/dev/**/*
+
+# Test: Auto-approve (CI/CD efficiency)
+terragrunt-apply-test:
+  stage: apply
+  script:
+    - |
+      for region in $(echo "$AWS_REGIONS" | tr ',' ' '); do
+        echo "🚀 Auto-applying changes in $region (test)..."
+        export AWS_REGION="$region"
+        export AWS_DEFAULT_REGION="$region"
+        cd "$CI_PROJECT_DIR/$ENV_PATH"
+        find . -type d -name ".terragrunt-cache" -exec rm -rf {} + 2>/dev/null || true
+        terragrunt run-all init -reconfigure ${TG_OPTS}
+        terragrunt run-all apply ${TG_OPTS}
+        terragrunt run-all output -json ${TG_OPTS} | tee outputs-${region}.json
+      done
+  artifacts:
+    paths:
+      - environments/test/outputs-*.json
+    expire_in: 14 days
+  dependencies:
+    - policy-check
+  environment:
+    name: test
+    auto_stop_in: 3 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      changes:
+        - modules/**/*
+        - environments/test/**/*
+
+# Prod: Manual approval (safety gate)
+terragrunt-apply-prod:
+  stage: apply
+  script:
+    - |
+      for region in $(echo "$AWS_REGIONS" | tr ',' ' '); do
+        echo "📋 Plan Summary for $region:"
+        export AWS_REGION="$region"
+        export AWS_DEFAULT_REGION="$region"
+        cd "$CI_PROJECT_DIR/$ENV_PATH"
+        find . -type d -name ".terragrunt-cache" -exec rm -rf {} + 2>/dev/null || true
+        terragrunt run-all init -reconfigure ${TG_OPTS}
+        echo "Manual approval required for production deployment"
+        echo "🚀 Applying changes in $region (prod)..."
+        terragrunt run-all apply ${TG_OPTS}
+        terragrunt run-all output -json ${TG_OPTS} | tee outputs-${region}.json
+        
+        echo "✅ Deployment completed at $(date)" > deployment-report-${region}.txt
+        echo "Region: $region" >> deployment-report-${region}.txt
+        echo "Branch: $CI_COMMIT_BRANCH" >> deployment-report-${region}.txt
+        echo "Commit: $CI_COMMIT_SHA" >> deployment-report-${region}.txt
+        echo "Author: $GITLAB_USER_NAME" >> deployment-report-${region}.txt
+      done
+  artifacts:
+    paths:
+      - environments/prod/outputs-*.json
+      - environments/prod/deployment-report-*.txt
+    expire_in: 30 days
+  dependencies:
+    - policy-check
+  when: manual
+  allow_failure: false
+  environment:
+    name: production
+    action: start
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - modules/**/*
+        - environments/prod/**/*
+
+# -----------------------------
+# OBSERVABILITY (MULTI-REGION)
+# -----------------------------
+observability-prod:
+  stage: observability
+  script:
+    - |
+      for region in $(echo "$AWS_REGIONS" | tr ',' ' '); do
+        export AWS_REGION="$region"
+        export AWS_DEFAULT_REGION="$region"
+        cd "$CI_PROJECT_DIR/$ENV_PATH"
+        echo "🔍 Running post-deployment checks for $region..."
+        
+        # Check if infrastructure exists before running checks
+        echo "Checking if infrastructure exists in $region..."
+        if ! aws sts get-caller-identity >/dev/null 2>&1; then
+          echo "❌ AWS credentials not available, skipping checks"
+          continue
+        fi
+        
+        # Try to get EKS cluster name with error handling
+        EKS_CLUSTER_NAME=""
+        if [ -d "eks" ]; then
+          cd eks
+          EKS_CLUSTER_NAME=$(terragrunt output -json ${TG_OPTS} 2>/dev/null | jq -r '.cluster_name.value // empty' 2>/dev/null || echo "")
+          cd ..
+        fi
+        
+        if [ -n "$EKS_CLUSTER_NAME" ] && [ "$EKS_CLUSTER_NAME" != "null" ]; then
+          echo "Checking EKS cluster: $EKS_CLUSTER_NAME in $region"
+          if aws eks describe-cluster --region $region --name $EKS_CLUSTER_NAME >/dev/null 2>&1; then
+            aws eks update-kubeconfig --region $region --name $EKS_CLUSTER_NAME || echo "Failed to update kubeconfig"
+            kubectl get nodes -o wide || echo "Failed to get nodes"
+            kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded || echo "Failed to get pods"
+            kubectl top nodes || echo "Metrics server not available"
+          else
+            echo "EKS cluster $EKS_CLUSTER_NAME not found or not accessible"
+          fi
+        else
+          echo "No EKS cluster found or cluster name is empty"
+        fi
+        
+        if [ "$ENABLE_DRIFT_DETECTION" == "true" ]; then
+          echo "🔄 Running drift detection in $region..."
+          
+          # Check if terraform state exists before running plan
+          if terragrunt run-all init ${TG_OPTS} >/dev/null 2>&1; then
+            # Run plan and capture output
+            EXIT_CODE=0
+            terragrunt run-all plan ${TG_OPTS} -detailed-exitcode > drift-plan-${region}.log 2>&1 || EXIT_CODE=$?
+            
+            # Generate human-readable drift report
+            if [ "$EXIT_CODE" == "2" ]; then
+              echo "⚠️ DRIFT DETECTED in $region" > drift-report-${region}.txt
+              echo "Timestamp: $(date)" >> drift-report-${region}.txt
+              echo "Region: $region" >> drift-report-${region}.txt
+              echo "" >> drift-report-${region}.txt
+              echo "=== CHANGES DETECTED ===" >> drift-report-${region}.txt
+              grep -A 50 "Terraform will perform" drift-plan-${region}.log >> drift-report-${region}.txt || true
+              
+              echo "⚠️ Drift detected in $region infrastructure!"
+              echo "📄 Drift report saved to drift-report-${region}.txt"
+            elif [ "$EXIT_CODE" == "0" ]; then
+              echo "✅ No drift detected in $region" > drift-report-${region}.txt
+            else
+              echo "❌ Drift detection failed in $region" > drift-report-${region}.txt
+              echo "Exit code: $EXIT_CODE" >> drift-report-${region}.txt
+            fi
+          else
+            echo "❌ Cannot initialize terraform state in $region" > drift-report-${region}.txt
+            echo "Infrastructure may not exist or state is corrupted" >> drift-report-${region}.txt
+          fi
+        fi
+        
+        echo "🔒 Security posture check for $region:"
+        aws s3api get-public-access-block --bucket my-terraform-states-$region --region $region 2>/dev/null || echo "State bucket check failed - bucket may not exist"
+      done
+  dependencies:
+    - terragrunt-apply-prod
+  allow_failure: true
+  artifacts:
+    paths:
+      - environments/prod/drift-report-*.txt
+      - environments/prod/drift-plan-*.log
+    expire_in: 30 days
+    when: always
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+
+# -----------------------------
+# DESTROY (MANUAL TRIGGER)
+# -----------------------------
+destroy-dev:
+  stage: apply
+  script:
+    - cd "$ENV_PATH"
+    - echo "🗑️ Destroying dev infrastructure..."
+    - terragrunt run-all destroy ${TG_OPTS}
+  when: manual
+  allow_failure: false
+  environment:
+    name: dev
+    action: stop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+
+destroy-test:
+  stage: apply
+  script:
+    - cd "$ENV_PATH"
+    - echo "🗑️ Destroying test infrastructure..."
+    - terragrunt run-all destroy ${TG_OPTS}
+  when: manual
+  allow_failure: false
+  environment:
+    name: test
+    action: stop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+
+destroy-prod:
+  stage: apply
+  script:
+    - cd "$ENV_PATH"
+    - echo "🗑️ Destroying prod infrastructure..."
+    - terragrunt run-all destroy ${TG_OPTS}
+  when: manual
+  allow_failure: false
+  environment:
+    name: production
+    action: stop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

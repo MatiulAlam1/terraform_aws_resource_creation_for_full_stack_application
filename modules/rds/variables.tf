@@ -45,6 +45,11 @@ variable "vpc_id" {
   type        = string
 }
 
+variable "vpc_cidr" {
+  description = "VPC CIDR block for security group rules"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to RDS resources"
   type        = map(string)

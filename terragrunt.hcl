@@ -1,9 +1,13 @@
+locals {
+  region = get_env("AWS_REGION", "eu-west-2")
+}
+
 generate "provider" {
   path      = "provider.tf"
   if_exists = "overwrite_terragrunt"
   contents  = <<EOF
 provider "aws" {
-  region = "ap-south-1"
+  region = "${local.region}"
 }
 EOF
 }
@@ -11,11 +15,11 @@ EOF
 remote_state {
   backend = "s3"
   config = {
-    bucket         = "my-terraform-states-ap-south-1"
+    bucket         = "my-terraform-states-${local.region}"
     key            = "${path_relative_to_include()}/terraform.tfstate"
-    region         = "ap-south-1"
+    region         = local.region
     encrypt        = true
-    dynamodb_table = "terraform-locks"
+    dynamodb_table = "terraform-locks-${local.region}"
   }
   generate = {
     path      = "backend.tf"

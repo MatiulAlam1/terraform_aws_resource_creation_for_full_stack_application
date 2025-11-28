@@ -11,6 +11,10 @@ dependency "eks" {
 
 terraform { source = "../../../modules//helm-apps" }
 
+locals {
+  region = get_env("AWS_REGION", "eu-west-2")
+}
+
 generate "provider_k8s" {
   path      = "provider_k8s.tf"
   if_exists = "overwrite"
@@ -21,7 +25,7 @@ provider "kubernetes" {
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", "${dependency.eks.outputs.cluster_name}", "--region", "ap-south-1"]
+    args        = ["eks", "get-token", "--cluster-name", "${dependency.eks.outputs.cluster_name}", "--region", "${local.region}"]
   }
 }
 
@@ -32,7 +36,7 @@ provider "helm" {
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
       command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", "${dependency.eks.outputs.cluster_name}", "--region", "ap-south-1"]
+      args        = ["eks", "get-token", "--cluster-name", "${dependency.eks.outputs.cluster_name}", "--region", "${local.region}"]
     }
   }
 }

@@ -138,7 +138,7 @@ This gives you:
 ✔️ Grafana (but you will later use AMG)
 
 
-================================
+==================================
 
 Step 2 — Create AWS Managed Prometheus Workspace
 
@@ -155,7 +155,7 @@ Example:
 https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-ABC123
 
 
-=======================
+=========================
 
 Step 3 — Configure Prometheus Remote Write to AMP
 

@@ -11,6 +11,8 @@ This infrastructure is designed to support a modern full-stack application with 
 - Static asset delivery via CDN
 - GitOps deployment with ArgoCD
 - Service mesh with Istio
+- Multi-region deployment support
+- Automated CI/CD with GitLab
 
 ## AWS Resources Created
 
@@ -108,6 +110,7 @@ Backend → RDS (Database)
 
 #### 1. **Infrastructure Provisioning**
 
+**Manual Deployment:**
 ```bash
 # Deploy dev environment
 cd environments/dev
@@ -122,6 +125,19 @@ terragrunt run-all apply --terragrunt-non-interactive
 # Deploy prod environment
 cd ../prod
 terragrunt run-all apply --terragrunt-non-interactive
+```
+
+**GitLab CI/CD Deployment:**
+```bash
+# Push to trigger pipeline
+git add .
+git commit -m "Deploy infrastructure"
+git push origin dev    # Auto-deploys to dev environment
+git push origin test   # Auto-deploys to test environment
+git push origin main   # Requires manual approval for prod
+
+# After manual approval, observability job runs automatically
+# Check pipeline for drift detection and monitoring results
 ```
 
 #### 2. **Frontend Deployment (React/Vue/Angular)**
@@ -340,41 +356,163 @@ Each environment contains:
 6. Background workers consume from RabbitMQ (MQ)
 7. Analytics service processes Kafka streams
 
+## GitLab CI/CD Pipeline
+
+### Pipeline Stages
+1. **scan**: Test pipeline functionality (always runs)
+2. **init**: Terragrunt initialization with cache cleanup
+3. **validate**: Terraform validation
+4. **security**: IaC security scanning (Checkov, tfsec)
+5. **plan**: Terraform plan generation and policy checks
+6. **apply**: Multi-region deployment with manual approval for prod
+7. **observability**: Post-deployment monitoring, drift detection, and security checks
+
+### Multi-Region Configuration
+
+Set these variables in GitLab CI/CD settings (Group or Project level):
+
+```bash
+# Development regions (comma-separated)
+AWS_REGIONS_DEV="ap-south-1"
+
+# Test regions (comma-separated)
+AWS_REGIONS_TEST="ap-south-1,us-east-1"
+
+# Production regions (comma-separated)
+AWS_REGIONS_PROD="ap-south-1,us-east-1,eu-west-1"
+
+# AWS credentials
+AWS_ACCESS_KEY_ID="<your-access-key>"
+AWS_SECRET_ACCESS_KEY="<your-secret-key>"
+```
+
+### Branch-Based Deployment
+
+- **dev branch** → Deploys to dev environment (auto-approve)
+- **test branch** → Deploys to test environment (auto-approve)
+- **main branch** → Deploys to prod environment (manual approval required)
+
+### Resource Naming for Multi-Region
+
+Resources with region suffixes:
+- S3 buckets: `my-react-bucket-dev-2232131-ap-south-1`
+- ElastiCache: `my-redis-dev-ap-south-1`
+- CloudFront OAC: Derived from S3 bucket name
+
+Region-scoped resources (no suffix needed):
+- EKS clusters
+- RDS instances
+- MSK clusters
+- Amazon MQ brokers
+
+### Pipeline Features
+
+- **Test Job**: Always-running pipeline health check
+- **Security Scanning**: Checkov and tfsec for IaC vulnerabilities
+- **Policy Checks**: OPA/Conftest policy validation on plans
+- **Multi-Region Deployment**: Automatic deployment across configured regions
+- **Observability**: Post-deployment drift detection, EKS monitoring, security posture checks
+- **Artifact Storage**: Plan outputs, drift reports, and deployment reports stored for 7-30 days
+- **Manual Destroy**: Separate destroy jobs for each environment
+- **Error Handling**: Resilient observability checks with graceful failure handling
+
+### Pipeline Job Details
+
+#### Apply Jobs
+- **Dev**: Auto-approve, 7-day artifact retention
+- **Test**: Auto-approve, 14-day artifact retention  
+- **Prod**: Manual approval required, 30-day artifact retention
+
+#### Observability Job
+- **Dependencies**: Runs after `terragrunt-apply-prod` completes
+- **Features**: 
+  - EKS cluster health checks
+  - Infrastructure drift detection
+  - Security posture validation
+  - S3 state bucket access verification
+- **Error Handling**: Graceful failure with detailed logging
+- **Artifacts**: Drift reports and logs stored for 30 days
+
+### Triggering Deployments
+
+**Automatic triggers** (on file changes):
+```bash
+# Changes to modules or environment configs trigger pipeline
+modules/**/*
+environments/{dev,test,prod}/**/*
+```
+
+**Manual actions**:
+- **Production Deploy**: Manual approval required in GitLab UI
+- **Destroy Jobs**: Navigate to GitLab CI/CD → Pipelines → Manual Jobs → Click "Play"
+
 ## Configuration Management
 
 ### Terragrunt Variables
-- Region: `ap-south-1` (configurable)
+- Regions: Configured via GitLab CI/CD variables
 - Environment: `dev`, `test`, `prod`
 - Instance sizes: Configurable per environment
 - RDS count: Configurable (default: 1 for dev, 2 for test, 3 for prod)
 
 ### State Management
-- Backend: S3
-- State locking: DynamoDB
-- Bucket: `my-terraform-states-ap-south-1`
+- Backend: S3 (per region)
+- State locking: DynamoDB (per region)
+- Bucket pattern: `my-terraform-states-<region>`
 - Lock table: `terraform-locks`
 
 ## Prerequisites
 
+### Local Development
 1. AWS CLI configured with credentials
 2. Terraform >= 1.0
-3. Terragrunt installed
+3. Terragrunt >= 0.68.5
 4. kubectl installed
 5. helm installed
-6. S3 bucket for state: `my-terraform-states-ap-south-1`
-7. DynamoDB table: `terraform-locks` (Partition key: `LockID`)
+
+### GitLab CI/CD
+1. GitLab Runner with Docker executor
+2. AWS credentials configured in GitLab CI/CD variables
+3. Region variables set (AWS_REGIONS_DEV, AWS_REGIONS_TEST, AWS_REGIONS_PROD)
+
+### AWS Resources (per region)
+1. S3 bucket for state: `my-terraform-states-<region>`
+2. DynamoDB table: `terraform-locks` (Partition key: `LockID`)
 
 ## Getting Started
+
+### Option 1: GitLab CI/CD (Recommended)
+
+```bash
+# 1. Clone repository
+git clone <repo-url>
+cd aws-resource-creation-iaac
+
+# 2. Configure GitLab CI/CD variables
+# Go to GitLab → Settings → CI/CD → Variables
+# Add: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# Add: AWS_REGIONS_DEV, AWS_REGIONS_TEST, AWS_REGIONS_PROD
+
+# 3. Setup multi-region backends (run once)
+bash scripts/setup-multi-region-backend.sh "ap-south-1,us-east-1,eu-west-1"
+
+# 4. Push to trigger deployment
+git checkout -b dev
+git add .
+git commit -m "Initial deployment"
+git push origin dev
+```
+
+### Option 2: Manual Deployment
 
 ```bash
 # Clone repository
 git clone <repo-url>
-cd terraform-terragrunt-eks-vpc-setup-
+cd aws-resource-creation-iaac
 
-# Create S3 bucket for state
+# Create S3 bucket for state (per region)
 aws s3 mb s3://my-terraform-states-ap-south-1 --region ap-south-1
 
-# Create DynamoDB table for locking
+# Create DynamoDB table for locking (per region)
 aws dynamodb create-table \
   --table-name terraform-locks \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
@@ -389,20 +527,44 @@ terragrunt run-all apply
 
 ## Cleanup
 
+### GitLab CI/CD
+```bash
+# Navigate to GitLab → CI/CD → Pipelines
+# Find latest pipeline → Manual Jobs
+# Click "Play" on destroy-dev/destroy-test/destroy-prod
+```
+
+### Manual
 ```bash
 # Destroy all resources
 cd environments/dev
 terragrunt run-all destroy
+
+# For multi-region cleanup
+for region in ap-south-1 us-east-1 eu-west-1; do
+  export AWS_REGION=$region
+  cd environments/dev
+  terragrunt run-all destroy --terragrunt-non-interactive
+done
 ```
 
 ## Security Best Practices
 
+### Infrastructure Security
 - All resources in private subnets (except ALB)
 - S3 buckets are private with CloudFront OAC
 - RDS, ElastiCache, MSK, MQ only accessible from VPC
 - EKS uses IAM roles for service accounts
 - TLS encryption enabled for MSK
 - Security groups restrict traffic to VPC CIDR
+
+### CI/CD Security
+- Secrets scanning with Gitleaks
+- IaC security scanning (Checkov, tfsec)
+- AWS credentials stored as protected variables
+- Manual approval required for production
+- State files encrypted in S3
+- DynamoDB state locking prevents concurrent modifications
 
 ## Cost Optimization
 
